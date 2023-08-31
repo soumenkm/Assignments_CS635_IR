@@ -156,24 +156,34 @@ def create_tf_matrix(doc_dict):
 
     # Get the term frequency matrix
     tf_df = toc_df.div(toc_df.sum(axis=0, numeric_only=True), axis=1)
+    tf_df = tf_df.astype(float)
 
     return tf_df
 
-# Create the term - tf-idf vector for all terms
-def create_tf_idf_vector(tf_df):
+# Create the term - idf vector for all terms
+def create_idf_vector(tf_df):
 
     # Create the doc_freq dataframe
-    docfreq_df = pd.DataFrame(index=tf_df.index, columns=["doc_freq","idf","tf_idf"])
+    docfreq_df = pd.DataFrame(index=tf_df.index, columns=["doc_freq","idf"])
     docfreq_series = (tf_df != 0).sum(axis=1)
     docfreq_df["doc_freq"] = docfreq_series
     docfreq_df["idf"] = -np.log10(docfreq_series.to_numpy()) + np.log10(len(doc_dict))
-    docfreq_df["tf_idf"] = docfreq_df["doc_freq"] * docfreq_df["idf"]
 
-    return docfreq_df.iloc[:,-1].to_frame()
+    return docfreq_df.loc[:,"idf"].to_frame()
+
+# Create the term - document tf-idf for all (term, doc) pair
+def create_tf_idf_matrix(tf_df, idf_df):
+
+    # Calculate the tf-idf
+    tf_idf_df = pd.DataFrame(tf_df.to_numpy() * idf_df.to_numpy(),
+                             columns=tf_df.columns, index=tf_df.index)
+
+    return tf_idf_df
 
 # Main code
 if __name__ == "__main__":
     doc_dict = get_documents_from_corpus('cisi/cisi.all')
     tf_df = create_tf_matrix(doc_dict)
-    tf_idf_df = create_tf_idf_vector(tf_df)
+    idf_df = create_idf_vector(tf_df)
+    tf_idf_df = create_tf_idf_matrix(tf_df, idf_df)
 
