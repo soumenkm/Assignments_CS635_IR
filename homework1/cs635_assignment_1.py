@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 # Get the documents from corpus
-def get_documents_from_corpus(corpus_src):
+def get_documents_from_corpus(corpus_src, corpus_type = "doc"):
 
     # Extract the documents ID position
     with open(corpus_src, 'r') as file:
@@ -44,73 +44,115 @@ def get_documents_from_corpus(corpus_src):
     doc_dict = {}
     for doc in doc_list:
         doc_lines = doc.splitlines()
-        pos_dotI = [i for i,j in enumerate(doc_lines) if ".I" in j][0]
-        pos_dotT = [i for i,j in enumerate(doc_lines) if ".T" in j][0]
-        pos_dotA = [i for i,j in enumerate(doc_lines) if ".A" in j][0]
-        pos_dotW = [i for i,j in enumerate(doc_lines) if ".W" in j][0]
-        pos_dotX = [i for i,j in enumerate(doc_lines) if ".X" in j][0]
 
-        docid = ("\n".join(doc_lines[pos_dotI:pos_dotT])).replace(".I ","docid_")
-        title = "\n".join(doc_lines[pos_dotT+1:pos_dotA])
-        author = "\n".join(doc_lines[pos_dotA+1:pos_dotW])
-        abstract = "\n".join(doc_lines[pos_dotW+1:pos_dotX])
-        ref = "\n".join(doc_lines[pos_dotX+1:])
+        if corpus_type == "doc":
+            pos_dotI = [i for i,j in enumerate(doc_lines) if ".I" in j][0]
+            pos_dotT = [i for i,j in enumerate(doc_lines) if ".T" in j][0]
+            pos_dotA = [i for i,j in enumerate(doc_lines) if ".A" in j][0]
+            pos_dotW = [i for i,j in enumerate(doc_lines) if ".W" in j][0]
+            pos_dotX = [i for i,j in enumerate(doc_lines) if ".X" in j][0]
 
-        doc_dict[docid] = {
-            "title": title,
-            "author": author,
-            "abstract": abstract,
-            "ref": ref
-        }
+            docid = ("\n".join(doc_lines[pos_dotI:pos_dotT])).replace(".I ","docid_")
+            title = "\n".join(doc_lines[pos_dotT+1:pos_dotA])
+            author = "\n".join(doc_lines[pos_dotA+1:pos_dotW])
+            abstract = "\n".join(doc_lines[pos_dotW+1:pos_dotX])
+            ref = "\n".join(doc_lines[pos_dotX+1:])
+
+            doc_dict[docid] = {
+                "id": docid,
+                "title": title,
+                "author": author,
+                "abstract": abstract,
+                "ref": ref
+            }
+        elif corpus_type == "query":
+            pos_dotI = [i for i,j in enumerate(doc_lines) if ".I" in j][0]
+            pos_dotW = [i for i,j in enumerate(doc_lines) if ".W" in j][0]
+            try:
+                pos_dotT = [i for i,j in enumerate(doc_lines) if ".T" in j][0]
+                pos_dotA = [i for i,j in enumerate(doc_lines) if ".A" in j][0]
+            except IndexError:
+                qid = ("\n".join(doc_lines[pos_dotI:pos_dotW])).replace(".I ","queryid_")
+                query = "\n".join(doc_lines[pos_dotW+1:])
+                doc_dict[qid] = {
+                    "id": qid,
+                    "title": "",
+                    "author": "",
+                    "query": query
+                }
+            else:
+                qid = ("\n".join(doc_lines[pos_dotI:pos_dotT])).replace(".I ","queryid_")
+                title = "\n".join(doc_lines[pos_dotT+1:pos_dotA])
+                author = "\n".join(doc_lines[pos_dotA+1:pos_dotW])
+                query = "\n".join(doc_lines[pos_dotW+1:])
+
+                doc_dict[qid] = {
+                    "id": qid,
+                    "title": title,
+                    "author": author,
+                    "query": query
+                }
+        else:
+            raise ValueError("Invalid corpus type. Valid: ['doc','query']")
 
     return doc_dict
 
-# Tokenize the documents
-def tokenize_document(document, remove_stopword = True, remove_number = True):
+# Remove punctuations from text
+def remove_punctuation(text, to_include = ""):
 
-    # Convert tokens to lowercase
-    token_list = []
-    abstract = document["abstract"].lower()
-    title = document["title"].lower()
-    author = document["author"].lower()
-
-    # Remove punctuations from tokens
-    text = title + "\n" + author + "\n" + abstract
     punctuation_chars = ['!', '"', '#', '$', '%', '&', "'", '(', ')',
                          '*', '+', ',', '-', '.', '/', ':', ';', '<',
                          '=', '>', '?', '@', '[', '\\', ']', '^', '_',
                          '`', '{', '|', '}', '~']
     text_mod = ""
     for char in text:
-        if char not in punctuation_chars:
+        if char not in punctuation_chars or char == to_include:
             text_mod += char
 
+    return text_mod
+
+# Get stopword list from text file
+def get_stopword_list(stopword_src):
+
+    with open(stopword_src, "r") as f:
+        content = f.read()
+        content = remove_punctuation(content, ",")
+        stop_word_list = content.split(",")
+
+    return stop_word_list
+
+# Count in Linear search
+def count_linear_search(search_item, src_list):
+    count = 0
+    for i in src_list:
+        if i == search_item:
+            count += 1
+
+    return count
+
+# Tokenize the documents
+def tokenize_document(document,
+                      remove_stopword = True,
+                      remove_number = True):
+
+    # Convert document to lowercase
+    abstract = document["abstract"].lower()
+    title = document["title"].lower()
+    author = document["author"].lower()
+
+    # Remove punctuations from the documents
+    abstract = remove_punctuation(abstract)
+    title = remove_punctuation(title)
+    author = " ".join([i.strip() for i in author.split(",") if "." not in i])
+
+    # Split the document text to get tokens
+    text = title + "\n" + author + "\n" + abstract
+    text = text.replace("\n"," ")
+    token_list = text.split(" ")
+    token_list = [i.strip() for i in token_list if i]
+
     # Remove stopwords
-    token_list += text_mod.split()
-    stop_word_list = ['i', 'me', 'my', 'myself', 'we', 'our', 'ours',
-                      'ourselves', 'you', 'your', 'yours', 'yourself',
-                      'yourselves', 'he', 'him', 'his', 'himself', 'she',
-                      'her', 'hers', 'herself', 'it', 'its', 'itself',
-                      'they', 'them', 'their', 'theirs', 'themselves',
-                      'what', 'which', 'who', 'whom', 'this', 'that',
-                      'these', 'those', 'am', 'is', 'are', 'was', 'were',
-                      'be', 'been', 'being', 'have', 'has', 'had', 'having',
-                      'do', 'does', 'did', 'doing', 'a', 'an', 'the', 'and',
-                      'but', 'if', 'or', 'because', 'as', 'until', 'while',
-                      'of', 'at', 'by', 'for', 'with', 'about', 'against',
-                      'between', 'into', 'through', 'during', 'before',
-                      'after', 'above', 'below', 'to', 'from', 'up', 'down',
-                      'in', 'out', 'on', 'off', 'over', 'under', 'again',
-                      'further', 'then', 'once', 'here', 'there', 'when',
-                      'where', 'why', 'how', 'all', 'any', 'both', 'each',
-                      'few', 'more', 'most', 'other', 'some', 'such', 'no',
-                      'nor', 'not', 'only', 'own', 'same', 'so', 'than',
-                      'too', 'very', 's', 't', 'can', 'will', 'just', 'don',
-                      'should', 'now', 'd', 'll', 'm', 'o', 're', 've', 'y',
-                      'ain', 'aren', 'couldn', 'didn', 'doesn', 'hadn',
-                      'hasn', 'haven', 'isn', 'ma', 'mightn', 'mustn',
-                      'needn', 'shan', 'shouldn', 'wasn', 'weren', 'won',
-                      'wouldn', 'also']
+    stop_word_list = get_stopword_list("stopwords.txt")
 
     if remove_stopword:
         token_list = [i for i in token_list if i not in stop_word_list]
@@ -123,16 +165,17 @@ def tokenize_document(document, remove_stopword = True, remove_number = True):
     # Remove single character tokens
     token_list = [i for i in token_list if len(i) > 1]
 
-    # Get the unique tokens and sorted order
+    # Get the unique tokens in sorted order
     token_list = sorted(list(set(token_list)))
     token_dict = {}
+    text_list = text.split(" ")
     for i in token_list:
-        token_dict[i] = text_mod.count(i)
+        token_dict[i] = count_linear_search(i, text_list)
 
     return token_dict
 
-# Create the term - tf array for all documents
-def create_tf_matrix(doc_dict):
+# Gnerate the tokens list for whole corpus
+def generate_corpus_tokens(doc_dict):
 
     # Tokenize the documents
     all_token_dict = {}
@@ -144,8 +187,13 @@ def create_tf_matrix(doc_dict):
     # Get sorted token dict for whole corpus
     index_list = sorted(list(set(index_list)))
 
+    return index_list, all_token_dict
+
+# Create the term - tf array for all documents
+def create_tf_matrix(index_list, all_token_dict):
+
     # Get the term occurrence matrix
-    toc_df = pd.DataFrame(columns=list(all_token_dict.keys()), index=index_list)
+    toc_df = pd.DataFrame(0, columns=list(all_token_dict.keys()), index=index_list)
 
     for docid, token_dict in all_token_dict.items():
          for token, toc in token_dict.items():
@@ -180,10 +228,95 @@ def create_tf_idf_matrix(tf_df, idf_df):
 
     return tf_idf_df
 
+# Preprocess query for counting frequency of corpus tokens
+def preprocess_query(query_dict):
+
+    query_mod_dict = {}
+    for qid, query_dict in query_dict.items():
+        query = query_dict["query"]
+        query = query.lower()
+        query = remove_punctuation(query)
+
+        query = query.replace("\n"," ")
+        query_token_list = query.split(" ")
+        query_token_list = [i.strip() for i in query_token_list if i]
+
+        stop_word_list = get_stopword_list("stopwords.txt")
+        query_token_list = [i for i in query_token_list if i not in stop_word_list]
+
+        digits_str = ["0","1","2","3","4","5","6","7","8","9"]
+        query_token_list = [i for i in query_token_list if not i[0] in digits_str]
+        query_token_list = [i for i in query_token_list if len(i) > 1]
+        query_token_list = list(set(query_token_list))
+
+        query = " ".join(query_token_list)
+        query_mod_dict[qid] = query
+
+    return query_mod_dict
+
+# Create the tf-query matrix
+def create_tf_query_matrix(query_data_dict, index_list):
+    query_toc_df = pd.DataFrame(0, columns=list(query_data_dict.keys()),
+                               index=index_list)
+    for index in index_list:
+        for qid, query in query_data_dict.items():
+            query_list = query.split(" ")
+            query_toc_df.loc[index,qid] = count_linear_search(index, query_list)
+
+    query_tf_df = query_toc_df.div(query_toc_df.sum(axis=0, numeric_only=True), axis=1)
+    query_tf_df = query_tf_df.astype(float)
+
+    return query_tf_df
+
+# Calculate the similarity score for all the queries
+def calculate_similarity_score(query_tf_idf_df, doc_tf_idf_df):
+
+    q_arr = query_tf_idf_df.to_numpy()
+    q_arr = q_arr/np.linalg.norm(q_arr,axis=0)
+    d_arr = doc_tf_idf_df.to_numpy()
+
+    sim_arr = np.dot(q_arr.T, d_arr)
+    sim_arr = sim_arr/np.sum(sim_arr,axis=1,keepdims=True)*100
+    sim_df = pd.DataFrame(sim_arr,
+                          columns=doc_tf_idf_df.columns,
+                          index=query_tf_idf_df.columns)
+    return sim_df
+
+# Retrieve highly ranked documents for all query
+def retrieve_ranked_document(sim_df, doc_dict):
+
+    ranked_dict = {}
+    for i in range(sim_df.shape[0]):
+        doc_rank_list = list(sim_df.iloc[i,:].sort_values(ascending=False).index)[0:10]
+        top10_dict = {}
+        for j,k in enumerate(doc_rank_list):
+            top10_dict[f"rank_{j}"] = doc_dict[k]
+
+        ranked_dict[sim_df.index[i]] = top10_dict
+
+    return ranked_dict
+
+
 # Main code
 if __name__ == "__main__":
+
+    # Get the tf-idf matrix for the documents
     doc_dict = get_documents_from_corpus('cisi/cisi.all')
-    tf_df = create_tf_matrix(doc_dict)
+    index_list, all_token_dict = generate_corpus_tokens(doc_dict)
+    tf_df = create_tf_matrix(index_list, all_token_dict)
     idf_df = create_idf_vector(tf_df)
-    tf_idf_df = create_tf_idf_matrix(tf_df, idf_df)
+    doc_tf_idf_df = create_tf_idf_matrix(tf_df, idf_df)
+
+    # Get the tf-idf matrix for the queries
+    query_dict = get_documents_from_corpus('cisi/cisi.qry',"query")
+    query_mod_dict = preprocess_query(query_dict)
+    query_tf_df = create_tf_query_matrix(query_mod_dict, index_list)
+    query_tf_idf_df = create_tf_idf_matrix(query_tf_df, idf_df)
+
+    # Calculate the similarity score for query and document pair
+    sim_df = calculate_similarity_score(query_tf_idf_df, doc_tf_idf_df)
+    ranked_dict = retrieve_ranked_document(sim_df, doc_dict)
+
+
+
 
