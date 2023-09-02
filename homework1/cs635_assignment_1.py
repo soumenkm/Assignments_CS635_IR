@@ -9,6 +9,8 @@ Created on Wed Aug 30 20:40:42 2023
 # Imports
 import numpy as np
 import pandas as pd
+from transformers import AutoTokenizer
+import os
 
 # Get the documents from corpus
 def get_documents_from_corpus(corpus_src, corpus_type = "doc"):
@@ -283,21 +285,133 @@ def calculate_similarity_score(query_tf_idf_df, doc_tf_idf_df):
     return sim_df
 
 # Retrieve highly ranked documents for all query
-def retrieve_ranked_document(sim_df, doc_dict):
+def retrieve_ranked_document(sim_df, doc_dict, top=20):
 
     ranked_dict = {}
+    ranked_df = pd.DataFrame(0,
+                             columns=[f"rank_{j+1}" for j in range(top)],
+                             index=sim_df.index)
+
     for i in range(sim_df.shape[0]):
-        doc_rank_list = list(sim_df.iloc[i,:].sort_values(ascending=False).index)[0:10]
-        top10_dict = {}
+        doc_rank_list = list(sim_df.iloc[i,:].sort_values(ascending=False).index)[0:top]
+        topk_dict = {}
         for j,k in enumerate(doc_rank_list):
-            top10_dict[f"rank_{j}"] = doc_dict[k]
+            topk_dict[f"rank_{j+1}"] = doc_dict[k]
+            ranked_df.iloc[i,j] = doc_dict[k]["id"]
 
-        ranked_dict[sim_df.index[i]] = top10_dict
+        ranked_dict[sim_df.index[i]] = topk_dict
 
-    return ranked_dict
+    return ranked_dict, ranked_df
 
+# Get the relevance or ground truth
+def get_relevance(rel_src):
 
-# Main code
+    with open(rel_src, "r") as f:
+        cisi_rel_contents = f.read()
+
+    line_list = cisi_rel_contents.split("\n")
+    rel_data = []
+    for i in line_list:
+        i = i.replace("\t"," ")
+        line = i.split()
+        rel_data.append(line)
+
+    rel_df = pd.DataFrame(rel_data,columns=["qryid","docid","rel","rel_score"])
+    return rel_df
+
+# Calculate relevance for the retrieved docs against all query
+def calculate_relevance_ranked_doc(ranked_dict, rel_df):
+
+    topk = len(ranked_dict["queryid_1"].keys())
+    ranked_rel_df = pd.DataFrame(0,
+                                 index=list(ranked_dict.keys()),
+                                 columns=[f"rank_{i+1}" for i in range(topk)])
+
+    for qid, rank in ranked_dict.items():
+        for rid, doc in rank.items():
+            docid = doc["id"].replace("docid_","")
+            if (rel_df[(rel_df["qryid"] == qid.replace("queryid_","")) &
+                       (rel_df["docid"] == docid)]).shape[0] != 0:
+                ranked_rel_df.loc[qid,rid] = 1
+
+    return ranked_rel_df
+
+# Calculate MAP
+def calculate_MAP(ranked_rel_df, ranked_df):
+
+    topk = ranked_df.shape[1]
+    prec_df = pd.DataFrame(0,
+                           columns=[f"P@{i+1}" for i in range(topk)],
+                           index=ranked_df.index)
+    for i in range(ranked_rel_df.shape[0]):
+        sorted_rel = ranked_rel_df.iloc[i,:].sort_values(ascending=False)
+        for k in range(1,topk+1):
+            prec_at_k = (sorted_rel.iloc[:k].sum())/k
+            prec_df.iloc[i,k-1] = prec_at_k
+
+    avg_prec_series = prec_df.mean(axis=1)
+    mean_avg_prec = avg_prec_series.mean()
+
+    return mean_avg_prec
+
+# Calculate NDCG
+def calculate_NDCG(ranked_rel_df, ranked_df):
+
+    topk = ranked_df.shape[1]
+    ndcg_df = pd.DataFrame(0, columns=["dcg","idcg","ndcg"], index=ranked_df.index)
+    for i in range(ranked_rel_df.shape[0]):
+        sorted_rel = ranked_rel_df.iloc[i,:].sort_values(ascending=False)
+        unsorted_rel = ranked_rel_df.iloc[i,:]
+
+        dcg = unsorted_rel.iloc[0]
+        idcg = sorted_rel.iloc[0]
+        for k in range(2,topk+1):
+            dcg += unsorted_rel.iloc[k-1]/np.log2(k+1)
+            idcg += sorted_rel.iloc[k-1]/np.log2(k+1)
+
+        if idcg == 0:
+            ndcg = 0
+        else:
+            ndcg = dcg/idcg
+
+        ndcg_df.iloc[i,0] = dcg
+        ndcg_df.iloc[i,1] = idcg
+        ndcg_df.iloc[i,2] = ndcg
+
+    avg_ndcg = ndcg_df.mean(axis=0)[-1]
+    return avg_ndcg
+
+# Generate tokens from HuggingFace pretrained BERT model
+def get_token_text_from_HuggingFace(corpus_src):
+
+    model_name = "bert-large-uncased"
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    corpus_file_path = corpus_src
+    output_dir = "hugging_face_output"
+    os.makedirs(output_dir, exist_ok=True)
+
+    max_chunk_length = 512
+
+    with open(corpus_file_path, 'r') as file:
+        corpus_text = file.read()
+
+    chunks = [corpus_text[i:i + max_chunk_length] for i in range(0, len(corpus_text), max_chunk_length)]
+    for i, chunk in enumerate(chunks):
+        tokenized_chunk = tokenizer.tokenize(chunk)
+        tokenized_chunk_file = os.path.join(output_dir, f'tokenized_chunk_{i}.txt')
+
+        with open(tokenized_chunk_file, 'w') as file:
+            file.write(' '.join(tokenized_chunk))
+
+    token_text = ""
+    for i in os.listdir(output_dir):
+        with open(f"{output_dir}/{i}","r") as f:
+            content = f.read()
+        token_text += content + " "
+
+    return token_text
+
+#%% Main code
 if __name__ == "__main__":
 
     # Get the tf-idf matrix for the documents
@@ -313,10 +427,18 @@ if __name__ == "__main__":
     query_tf_df = create_tf_query_matrix(query_mod_dict, index_list)
     query_tf_idf_df = create_tf_idf_matrix(query_tf_df, idf_df)
 
-    # Calculate the similarity score for query and document pair
+    # Calculate the similarity score and retrive top 10 documents
     sim_df = calculate_similarity_score(query_tf_idf_df, doc_tf_idf_df)
-    ranked_dict = retrieve_ranked_document(sim_df, doc_dict)
+    ranked_dict, ranked_df = retrieve_ranked_document(sim_df, doc_dict)
 
+    # Get the relevance for ranked documents
+    rel_df = get_relevance("cisi/cisi.rel")
+    ranked_rel_df = calculate_relevance_ranked_doc(ranked_dict, rel_df)
 
+    # Get the MAP and NDCG
+    mean_avg_prec = calculate_MAP(ranked_rel_df, ranked_df)
+    avg_ndcg = calculate_NDCG(ranked_rel_df, ranked_df)
 
+#%%
+token_text_hf = get_token_text_from_HuggingFace("cisi/cisi.all")
 
