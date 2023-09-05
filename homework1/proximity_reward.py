@@ -30,15 +30,15 @@ def preprocess_text(text, ishf):
     else:
         tokens = word_tokenize(text.lower())
 
-    stop_words = set(stopwords.words("english"))
-    tokens = [word for word in tokens if word not in stop_words and word not in string.punctuation]
-    tokens = [word for word in tokens if not word.isnumeric() and len(word) > 2]
+        stop_words = set(stopwords.words("english"))
+        tokens = [word for word in tokens if word not in stop_words and word not in string.punctuation]
+        tokens = [word for word in tokens if not word.isnumeric() and len(word) > 2]
 
-    lemmatizer = WordNetLemmatizer()
-    tokens = [lemmatizer.lemmatize(word) for word in tokens]
+        lemmatizer = WordNetLemmatizer()
+        tokens = [lemmatizer.lemmatize(word) for word in tokens]
 
-    stemmer = PorterStemmer()
-    tokens = [stemmer.stem(word) for word in tokens]
+        stemmer = PorterStemmer()
+        tokens = [stemmer.stem(word) for word in tokens]
 
     return " ".join(tokens)
 
@@ -181,6 +181,7 @@ def build_corpus(corpus):
 def perform_normal_search(ix, queries, top_k=10):
 
     retrieval_results = {}
+    retrieval_results_score = {}
     searcher = ix.searcher()
 
     for qid, query_str in queries.items():
@@ -188,10 +189,12 @@ def perform_normal_search(ix, queries, top_k=10):
         query = query_parser.parse(query_str)
         results = searcher.search(query, limit=top_k)
         doc_ids = [result["docid"] for result in results]
+        scores = [result.score for result in results]
         retrieval_results[qid] = doc_ids
+        retrieval_results_score[qid] = scores
 
     searcher.close()
-    return retrieval_results
+    return retrieval_results, retrieval_results_score
 
 #%% Perform proximity search
 def perform_proximity_search(ix, queries, proximity_distance=10, top_k=10):
@@ -246,18 +249,24 @@ def get_relevance(rel_src):
     return rel_df
 
 #%% Calculate relevance for the retrieved docs against all query
-def calculate_relevance_ranked_doc(retrieval_results, rel_df):
+def calculate_relevance_ranked_doc(retrieval_results, retrieval_results_score, rel_df):
 
     top = len(retrieval_results["queryid_1"])
     ranked_df = pd.DataFrame(0,
                              columns=[f"rank_{j+1}" for j in range(top)],
                              index=list(retrieval_results.keys()))
 
+    ranked_df_score = pd.DataFrame(0,
+                                   columns=[f"rank_{j+1}" for j in range(top)],
+                                   index=list(retrieval_results.keys()))
+
     for i,j in retrieval_results.items():
         try:
             ranked_df.loc[i,:] = j
+            ranked_df_score.loc[i,:] = retrieval_results_score[i]
         except ValueError:
             ranked_df.loc[i,:] = [""]*top
+            ranked_df_score.loc[i,:] = [0]*top
 
     ranked_rel_df = pd.DataFrame(0,
                                  index=list(ranked_df.index),
@@ -270,7 +279,7 @@ def calculate_relevance_ranked_doc(retrieval_results, rel_df):
                        (rel_df["docid"] == docid)]).shape[0] != 0:
                 ranked_rel_df.loc[qid,rid] = 1
 
-    return ranked_df, ranked_rel_df
+    return ranked_df, ranked_df_score, ranked_rel_df
 
 #%% Calculate MAP
 def calculate_MAP(ranked_rel_df, ranked_df):
@@ -319,39 +328,70 @@ def calculate_NDCG(ranked_rel_df, ranked_df):
     avg_ndcg = ndcg_df.mean(axis=0)[-1]
     return avg_ndcg
 
-#%% Run code
+#%% Main code
 def main(isprox, ishf):
 
+    isprox = False
+    ishf = False
     corpus, queries = get_clean_corpus("cisi/cisi.all", "cisi/cisi.qry", ishf)
     ix = build_corpus(corpus)
 
     if isprox:
         results = perform_proximity_search(ix, queries)
     else:
-        results = perform_normal_search(ix, queries)
+        results, results_score = perform_normal_search(ix, queries)
 
     rel_df = get_relevance("cisi/cisi.rel")
-    ranked_df, ranked_rel_df = calculate_relevance_ranked_doc(results, rel_df)
+    ranked_df, ranked_df_score, ranked_rel_df = calculate_relevance_ranked_doc(results, results_score, rel_df)
 
     mean_avg_prec = calculate_MAP(ranked_rel_df, ranked_df)
     avg_ndcg = calculate_NDCG(ranked_rel_df, ranked_df)
 
     return mean_avg_prec, avg_ndcg
 
-#%% Main code
+#%% Run code
 if __name__ == "__main__":
+    pass
 
-    # Run with normal tokenizer
-    map_val, ndcg_val = main(isprox=False, ishf=False)
+    # # Run with normal tokenizer
+    # map_val, ndcg_val = main(isprox=False, ishf=False)
 
-    # Run with BERT tokenizer
-    map_val_hf, ndcg_val_hf = main(isprox=False, ishf=True)
+    # # Run with BERT tokenizer
+    # map_val_hf, ndcg_val_hf = main(isprox=False, ishf=True)
 
-    # Run with normal tokenizer - proximity
-    map_val_prox, ndcg_val_prox = main(isprox=True, ishf=False)
+    # # Run with normal tokenizer - proximity
+    # map_val_prox, ndcg_val_prox = main(isprox=True, ishf=False)
 
-    # Run with BERT tokenizer - proximity
-    map_val_hf_prox, ndcg_val_hf_prox = main(isprox=True, ishf=True)
+    # # Run with BERT tokenizer - proximity
+    # map_val_hf_prox, ndcg_val_hf_prox = main(isprox=True, ishf=True)
 
+#%%
+import numpy as np
+from sklearn.metrics import average_precision_score
+from sklearn.metrics import ndcg_score
+
+relevance_df = ranked_rel_df.copy()
+ranked_df_score = ranked_df_score.copy()
+
+# Create empty lists to store results for each query
+average_precisions = []
+ndcgs = []
+
+# Iterate over each query ID
+for query_id in ranked_df_score.index:
+    true_relevance = relevance_df.loc[query_id].values
+    ranked_list = ranked_df_score.loc[query_id].values
+
+    ap = average_precision_score(true_relevance, ranked_list)
+    ndcg = ndcg_score([true_relevance], [ranked_list])
+    average_precisions.append(ap)
+    ndcgs.append(ndcg)
+
+map_score = np.mean(average_precisions)
+ndcg_score = np.mean(ndcgs)
+
+# Print the results
+print(f"MAP: {map_score}")
+print(f"NDCG: {ndcg_score}")
 
 

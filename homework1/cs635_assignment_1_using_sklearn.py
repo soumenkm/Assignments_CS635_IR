@@ -1,5 +1,5 @@
 #%% Import
-import nltk
+import nltk, os, shutil as st
 import numpy as np
 import pandas as pd
 from nltk.corpus import stopwords
@@ -107,7 +107,16 @@ def preprocess_text(text, ishf):
     if ishf:
         model_name = "bert-large-uncased"
         tokenizer = AutoTokenizer.from_pretrained(model_name)
-        tokens = tokenizer.tokenize(text)
+
+        parts = []
+        chunk_size = 512
+        for i in range(0, len(text), chunk_size):
+            part = text[i:i+chunk_size]
+            parts.append(part)
+
+        tokens = []
+        for i, part in enumerate(parts):
+            tokens += tokenizer.tokenize(part)
     else:
         tokens = word_tokenize(text.lower())
 
@@ -127,16 +136,25 @@ def preprocess_text(text, ishf):
 def get_topk_results(doc_dict, query_dict, topk, ishf):
 
     # Preprocess the documents and queries
-    queries = {qid: qry["title"] + " " + qry["query"] for qid, qry in query_dict.items()}
-    corpus = {docid: doc["title"] + " " + doc["abstract"] + " " + doc["author"] for docid, doc in doc_dict.items()}
+    unp_queries = {qid: qry["title"] + " " + qry["query"] for qid, qry in query_dict.items()}
+    unp_corpus = {docid: doc["title"] + " " + doc["abstract"] + " " + doc["author"] for docid, doc in doc_dict.items()}
 
     # Apply preprocessing to corpus and queries
-    corpus = {docid: preprocess_text(doc, ishf) for docid, doc in corpus.items()}
-    queries = {qid: preprocess_text(query, ishf) for qid, query in queries.items()}
+    corpus = {}
+    for docid, doc in unp_corpus.items():
+        corpus[docid] = preprocess_text(doc, ishf)
+        print(f"ishf?: {ishf}, {docid} done")
+
+    queries = {}
+    for qid, query in unp_queries.items():
+        queries[qid] = preprocess_text(query, ishf)
+        print(f"ishf?: {ishf}, {qid} done")
+
     corpus.update(queries)
 
     # Tokenize the corpus
-    tokenized_corpus = {i: nltk.word_tokenize(doc.lower()) for i, doc in corpus.items()}
+    # tokenized_corpus = {i: nltk.word_tokenize(doc.lower()) for i, doc in corpus.items()}
+    tokenized_corpus = {i: doc.lower().split(" ") for i, doc in corpus.items()}
 
     # Implement TF-IDF
     tfidf_vectorizer = TfidfVectorizer()
@@ -210,6 +228,8 @@ def calculate_MAP(ranked_rel_df, ranked_df):
     avg_prec_series = prec_df.mean(axis=1)
     mean_avg_prec = avg_prec_series.mean()
 
+    print(mean_avg_prec)
+
     return mean_avg_prec
 
 #%% Calculate NDCG
@@ -239,7 +259,6 @@ def calculate_NDCG(ranked_rel_df, ranked_df):
     avg_ndcg = ndcg_df.mean(axis=0)[-1]
     return avg_ndcg
 
-
 #%% Main code
 if __name__ == "__main__":
 
@@ -257,10 +276,10 @@ if __name__ == "__main__":
     retrieval_results_hf = get_topk_results(doc_dict, query_dict, 10, True)
 
     rel_df = get_relevance("cisi/cisi.rel")
-    ranked_df, ranked_rel_df = calculate_relevance_ranked_doc(retrieval_results, rel_df)
+    ranked_df_hf, ranked_rel_df_hf = calculate_relevance_ranked_doc(retrieval_results_hf, rel_df)
 
-    mean_avg_prec = calculate_MAP(ranked_rel_df, ranked_df)
-    avg_ndcg = calculate_NDCG(ranked_rel_df, ranked_df)
+    mean_avg_prec_hf = calculate_MAP(ranked_rel_df_hf, ranked_df_hf)
+    avg_ndcg_hf = calculate_NDCG(ranked_rel_df_hf, ranked_df_hf)
 
 #%%
 

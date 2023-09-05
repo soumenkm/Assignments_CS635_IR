@@ -10,6 +10,7 @@ Created on Wed Aug 30 20:40:42 2023
 import numpy as np
 import pandas as pd
 from transformers import AutoTokenizer
+from nltk.stem import PorterStemmer
 import os
 
 # Get the documents from corpus
@@ -127,15 +128,49 @@ def get_stopword_list(stopword_src):
 def count_linear_search(search_item, src_list):
     count = 0
     for i in src_list:
-        if i == search_item:
+        if i in search_item:
             count += 1
 
     return count
 
+# Check if digit is present
+def contains_digit(input_string):
+    for char in input_string:
+        if char.isdigit():
+            return True
+    return False
+
+# Preprocess text
+def preprocess_text(text):
+
+    # Split the document text to get tokens
+    text = text.replace("\n"," ")
+    text = remove_punctuation(text)
+    text = text.lower()
+    token_list = text.split(" ")
+    token_list = [i.strip() for i in token_list if i]
+
+    # Remove stopwords
+    stop_word_list = get_stopword_list("stopwords.txt")
+    token_list = [i for i in token_list if i not in stop_word_list]
+
+    # Remove numbers
+    token_list = [i for i in token_list if not contains_digit(i)]
+
+    # Remove two or less character tokens
+    token_list = [i for i in token_list if len(i) > 2]
+
+    # Stemming
+    stemmer = PorterStemmer()
+    token_list = [stemmer.stem(i) for i in token_list]
+
+    # Get the unique tokens in sorted order
+    token_list = sorted(list(set(token_list)))
+
+    return " ".join(token_list)
+
 # Tokenize the documents
-def tokenize_document(document,
-                      remove_stopword = True,
-                      remove_number = True):
+def tokenize_document(document):
 
     # Convert document to lowercase
     abstract = document["abstract"].lower()
@@ -150,22 +185,8 @@ def tokenize_document(document,
     # Split the document text to get tokens
     text = title + "\n" + author + "\n" + abstract
     text = text.replace("\n"," ")
+    text = preprocess_text(text)
     token_list = text.split(" ")
-    token_list = [i.strip() for i in token_list if i]
-
-    # Remove stopwords
-    stop_word_list = get_stopword_list("stopwords.txt")
-
-    if remove_stopword:
-        token_list = [i for i in token_list if i not in stop_word_list]
-
-    # Remove numbers
-    digits_str = ["0","1","2","3","4","5","6","7","8","9"]
-    if remove_number:
-        token_list = [i for i in token_list if not i[0] in digits_str]
-
-    # Remove single character tokens
-    token_list = [i for i in token_list if len(i) > 1]
 
     # Get the unique tokens in sorted order
     token_list = sorted(list(set(token_list)))
@@ -236,22 +257,7 @@ def preprocess_query(query_dict):
     query_mod_dict = {}
     for qid, query_dict in query_dict.items():
         query = query_dict["query"]
-        query = query.lower()
-        query = remove_punctuation(query)
-
-        query = query.replace("\n"," ")
-        query_token_list = query.split(" ")
-        query_token_list = [i.strip() for i in query_token_list if i]
-
-        stop_word_list = get_stopword_list("stopwords.txt")
-        query_token_list = [i for i in query_token_list if i not in stop_word_list]
-
-        digits_str = ["0","1","2","3","4","5","6","7","8","9"]
-        query_token_list = [i for i in query_token_list if not i[0] in digits_str]
-        query_token_list = [i for i in query_token_list if len(i) > 1]
-        query_token_list = list(set(query_token_list))
-
-        query = " ".join(query_token_list)
+        query = preprocess_text(query)
         query_mod_dict[qid] = query
 
     return query_mod_dict
@@ -427,7 +433,7 @@ if __name__ == "__main__":
     query_tf_df = create_tf_query_matrix(query_mod_dict, index_list)
     query_tf_idf_df = create_tf_idf_matrix(query_tf_df, idf_df)
 
-    # Calculate the similarity score and retrive top 10 documents
+    # Calculate the similarity score and retrive top documents
     sim_df = calculate_similarity_score(query_tf_idf_df, doc_tf_idf_df)
     ranked_dict, ranked_df = retrieve_ranked_document(sim_df, doc_dict)
 
@@ -440,5 +446,5 @@ if __name__ == "__main__":
     avg_ndcg = calculate_NDCG(ranked_rel_df, ranked_df)
 
 #%%
-token_text_hf = get_token_text_from_HuggingFace("cisi/cisi.all")
+#token_text_hf = get_token_text_from_HuggingFace("cisi/cisi.all")
 
